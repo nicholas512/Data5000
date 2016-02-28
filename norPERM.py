@@ -110,8 +110,12 @@ class Trawler(object):
         if self.CheckData(url) == True:  #is there data there?
             # Build Metadata
             self.getMeta(url)
-            datasource = self.cur_siteMeta["Name"]
-            sourceID = self.cur_siteMeta["Id"]    
+            try:
+                datasource = self.cur_siteMeta["Name"]
+                sourceID = self.cur_siteMeta["Id"]    
+            except:
+                datasource = self.cur_siteMeta["Borehole_ID"]
+                sourceID = self.cur_siteMeta["Name_on_Borehole"]        
             
             # Get links
             self.getDataLinks2(url)
@@ -120,14 +124,16 @@ class Trawler(object):
             # Gather data for each dataset on metadata page
             for link in self.cur_dataURL: 
                 index = self.cur_dataURL.index(link)+1
-                self.getData(link,datasource = self.cur_siteMeta['Name'],sourceID="_FiLE-"+str(index))
+                self.getData(link,datasource = datasource,sourceID="_FiLE-"+str(index))
             if verbose == True:
                 self.log.append("Data successfully read from " +url)
-                self.SuccessfulURL.append(url)
+                if not url in self.SuccessfulURL:
+                    self.SuccessfulURL.append(url)
         else:
             if verbose == True:
                 self.log.append(url+" skipped due to no data")
-                self.SkippedURL.append(url)
+                if not url in self.SkippedURL:
+                    self.SkippedURL.append(url)
             
     def getData(self,url,datasource="datasource",sourceID="1"):  
         # Load HTML page
@@ -172,7 +178,7 @@ class Trawler(object):
         # Go through Javascript links and find stable URLs for data
         beforepop = driver.window_handles # get a list of windows
         for link in datalinks:
-            link.click() #open thenk
+            link.click() #open then click
             afterpop = driver.window_handles # get the identifier of the new popup
             afterpop.remove(beforepop[0])  # remove old identified
             driver.switch_to_window(afterpop[0]) # switch to popup window
@@ -184,10 +190,14 @@ class Trawler(object):
         driver.close() # close metadata page   
 
     def writeLog(self):
-        outdir = self.out_dir + "/"+str(datatype) +"_" + "log.txt"
+        outdir = self.out_dir + "/"+ "log.txt"
         outfile = open(outdir,"w")
-        for line in self.log:
-            outfile.writelines(line)
+        outfile.writelines("Successfully read URLs: \n")
+        for line in self.SuccessfulURL:
+            outfile.writelines(line + "\n")
+        outfile.writelines("Skiped URLs: \n")
+        for line in self.SkippedURL:
+            outfile.writelines(line + "\n")
         outfile.close()
         
     def Trawl(self,startID,fileList,datatype = "unknwntyp"):
