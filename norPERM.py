@@ -4,6 +4,7 @@ from selenium import webdriver
 import time
 import pandas as pd
 import csv
+import os
 
 #################
 """Trawler"""  ## an object to scrape data from norperm
@@ -17,57 +18,116 @@ class Trawler(object):
         self.cur_siteMeta = dict()
         self.cur_nFiles = None
         self.out_dir = wd
-        
-
-    def getMeta(self,url): 
+        self.log = list()
+        self.SuccessfulURL = list()
+        self.SkippedURL = list()
+    
+    def CheckData(self,url):
+        # open site
         html = urllib2.urlopen(url).read() 
         soup = BeautifulSoup(html)
         
-        # parse HTML to get relevant information
+        #test if data is there
+        if len(soup.findAll("a")) == 1:
+            return(False)   
+    
+        elif len(soup.findAll("a")) > 1:
+            return(True)
+
+    def getMeta(self,url): 
+## Get metadata for multiple
+        html = urllib2.urlopen(url).read() 
+        soup = BeautifulSoup(html)
+       
         info = soup.findAll("b")  
+        info3 = [piece.nextSibling for piece in info]
         info2 = [piece.parent.nextSibling.nextSibling for piece in info] 
         
-        # build dictionary for metadata lookup
+        # build keys
+        keys=list()
+        for item in info:
+            key = str(item.text)
+            key = re.sub(":","",key)
+            key = re.sub("\.","",key)
+            key = re.sub(" $","",key)
+            key = re.sub(" ","_",key)
+            key = re.sub("__","_",key)
+            key = re.sub("^[_;\-,]*","",key) #trim leading garbage
+            keys.append(key)
+        
+        
+        # unique-ify keys
+        unikeys = list()
+        for key in keys:
+            ind = 1
+            testkey = key
+            if not keys.count(str(testkey)) == 1:
+                testkey = key + "_%s" %str(ind)    
+            while testkey in unikeys:
+                    testkey = key + "_%s" %str(ind)
+                    ind += 1
+            unikeys.append(testkey)          
+        
+        #build dictionary
         Metadata = dict() 
-        for item in info2:
-            if item:
-                key = str(info[info2.index(item)].text)
-                key = re.sub(":","",key)
-                key = re.sub("\.","",key)
-                key = re.sub(" $","",key)
-                key = re.sub(" ","_",key)
-                val = str(item.text)
-                Metadata.update({key:val})
-        if Metadata["Measuring_date"]:
-            endDate = info.index(filter(lambda x: re.search("Measuring date",str(x)),info)[0])
-            endDate = info[endDate].parent.nextSibling.nextSibling.nextSibling.nextSibling.text
-            Metadata.update({"Measuring_date_Stop":endDate})
+        for key in unikeys:
+            val = ""
+            if info2[unikeys.index(key)]:
+                try:
+                    val = str(info2[unikeys.index(key)].text)
+                except:
+                    val = "Unable to process"                
+            elif not info2[unikeys.index(key)]:
+                try:
+                    val = str(info3[unikeys.index(key)])
+                except:
+                    val = "Unable to process"
+            
+            val = re.sub("[;, /-/.]*$","",val) # trim trailing garbage
+            Metadata.update({key:val})
+        
+        # Add stop times (don't worry about this for now) TODO: worry about this       
+        #if Metadata["Measuring_date"]:
+        #    endDate = info.index(filter(lambda x: re.search("Measuring date",str(x)),info)[0])
+        #    endDate = info[endDate].parent.nextSibling.nextSibling.nextSibling.nextSibling.text
+        #    Metadata.update({"Measuring_date_Stop":endDate})
+        
         Metadata.update({"URL":url})
 
         #save to object (temporary storage)
         self.cur_siteMeta = Metadata 
         
         # Write to CSV
-        metafile = self.out_dir + "/" + self.cur_siteMeta["Name"] + "-" + self.cur_siteMeta["Id"] + "metadata.csv"
+        try:
+            metafile = self.out_dir + "/" + self.cur_siteMeta["Name"] + "-" + self.cur_siteMeta["Id"] + "metadata.csv"
+        except:
+            metafile = self.out_dir + "/" + self.cur_siteMeta["Borehole_ID"] + "-" + self.cur_siteMeta["Name_on_Borehole"] + "metadata.csv"
         writer = csv.writer(open(metafile, 'wb'))
         for key, value in self.cur_siteMeta.items():
             writer.writerow([key, value])
         
-    def TrawlPage(self,url):  # Todo: build this.
-        
-        # Build Metadata
-        self.getMeta(url)
-        datasource = self.cur_siteMeta["Name"]
-        sourceID = self.cur_siteMeta["Id"]    
-        
-        # Get links
-        self.getDataLinks2(url)
-        self.nFiles = len(self.cur_dataURL)
-        
-        # Gather data for each dataset on metadata page
-        for link in self.cur_dataURL: 
-            index = self.cur_dataURL.index(link)
-            self.getData(link,datasource = self.cur_siteMeta['Name'],sourceID="_FiLE-"+str(index))
+    def TrawlPage(self,url,verbose=False):
+        if self.CheckData(url) == True:  #is there data there?
+            # Build Metadata
+            self.getMeta(url)
+            datasource = self.cur_siteMeta["Name"]
+            sourceID = self.cur_siteMeta["Id"]    
+            
+            # Get links
+            self.getDataLinks2(url)
+            self.nFiles = len(self.cur_dataURL)
+            
+            # Gather data for each dataset on metadata page
+            for link in self.cur_dataURL: 
+                index = self.cur_dataURL.index(link)+1
+                self.getData(link,datasource = self.cur_siteMeta['Name'],sourceID="_FiLE-"+str(index))
+            if verbose == True:
+                self.log.append("Data successfully read from " +url)
+                self.SuccessfulURL.append(url)
+        else:
+            if verbose == True:
+                self.log.append(url+" skipped due to no data")
+                self.SkippedURL.append(url)
             
     def getData(self,url,datasource="datasource",sourceID="1"):  
         # Load HTML page
@@ -78,8 +138,8 @@ class Trawler(object):
         data = soup.findAll("td","text10n") # only get data lines
         
         # Make files for data and comments
-        commentsdir = "/Users/Nick/Desktop/DataAcquision" + "/"+datasource+sourceID+"_comments.txt" # make these unique
-        outdir = "/Users/Nick/Desktop/DataAcquision" + "/"+datasource+sourceID+"_data.txt"          #make these unique
+        commentsdir = self.out_dir + "/"+datasource+sourceID+"_comments.txt" # make these unique
+        outdir = self.out_dir + "/"+datasource+sourceID+"_data.txt"          #make these unique
         
         # Write data and comments to file
         commentsfile = open(commentsdir,"w")
@@ -123,166 +183,25 @@ class Trawler(object):
         driver.switch_to_window(beforepop) # go back to main page
         driver.close() # close metadata page   
 
-    def getDataLinks(self, url):
-        driver = webdriver.Firefox()
-        driver.get(url)
-        beforepop = driver.window_handles
-        driver.find_elements_by_partial_link_text('measur')[0].click() #iterate over this to get multiple links?
-        afterpop = driver.window_handles
-        driver.switch_to_window(afterpop[1])
-        self.cur_dataURL = str(driver.current_url)
-        driver.close()
-        driver.switch_to_window(beforepop)
-        driver.close()
-
-  #  def Trawl(self,startID):
+    def writeLog(self):
+        outdir = self.out_dir + "/"+str(datatype) +"_" + "log.txt"
+        outfile = open(outdir,"w")
+        for line in self.log:
+            outfile.writelines(line)
+        outfile.close()
+        
+    def Trawl(self,startID,fileList,datatype = "unknwntyp"):
+        originaldir = self.out_dir
+        self.out_dir = self.out_dir + "/" + datatype
+        if not os.path.exists(self.out_dir):
+            os.makedirs(self.out_dir)
+        for url in fileList:
+            self.TrawlPage(url,verbose=True)
+        self.writeLog() # write log
+        self.log = list() # reset log
+        self.out_dir = originaldir # reset working directory
         
 
 F = Trawler("/Users/Nick/Desktop/DataAcquision")
-F.getDataLinks('http://aps.ngu.no/pls/oradb/minres_pe_fakta.pe_mtd?p_id=511&p_spraak=E')
-
-F.getData('http://aps.ngu.no/pls/oradb/minres_pe_fakta.EXP_MTD_DATA?p_id=583&p_spraak=E')  
-F.getMeta("http://aps.ngu.no/pls/oradb/minres_pe_fakta.pe_mtd?p_id=477&p_spraak=E")
-
-links = soup.findAll('a')
-dataLink = soup.findAll(href=re.compile("measuring"))
-newHTML = re.search('(http://.*spraak=E)',str(dataLink))
 
 
-## Get metadata for multiple
-html = urllib2.urlopen('http://aps.ngu.no/pls/oradb/minres_pe_fakta.pe_mtd?p_id=501&p_spraak=E').read() 
-soup = BeautifulSoup(html)
-        
-info = soup.findAll("b")  
-info2 = [piece.parent.nextSibling.nextSibling for piece in info] 
-
-Metadata = dict() 
-for item in info2:
-    if item:
-        print("this item %s")%(str(item)) 
-        ind = 2
-        key = str(info[info2.index(item)].text)
-        key = re.sub(":","",key)
-        key = re.sub("\.","",key)
-        key = re.sub(" $","",key)
-        key = re.sub(" ","_",key)
-        val = str(item.text)
-        testkey = key
-        while testkey in Metadata.keys():
-            print(str(testkey) +"is already in the keys")
-            testkey = key + "_%s" %str(ind)
-            ind += 1  
-        Metadata.update({testkey:val})
-
-if Metadata["Measuring_date"]:
-    endDate = info.index(filter(lambda x: re.search("Measuring date",str(x)),info)[0])
-    endDate = info[endDate].parent.nextSibling.nextSibling.nextSibling.nextSibling.text
-    Metadata.update({"Measuring_date_Stop":endDate})
-Metadata.update({"URL":url})
-
-##  Get metadata and write to Csv
-html = urllib2.urlopen('http://aps.ngu.no/pls/oradb/minres_pe_fakta.pe_mtd?p_id=477&p_spraak=E').read()
-soup = BeautifulSoup(html)
-info = soup.findAll("b")
-info2 = [piece.parent.nextSibling.nextSibling for piece in info]
-Metadata = dict()
-for item in info2:
-    if item:
-        key = str(info[info2.index(item)].text)
-        key = re.sub(":","",key)
-        key = re.sub("\.","",key)
-        key = re.sub(" $","",key)
-        key = re.sub(" ","_",key)
-        val = str(item.text)
-        Metadata.update({key:val})
-
-
-## Get data and write to csv
-html = urllib2.urlopen('http://aps.ngu.no/pls/oradb/minres_pe_fakta.EXP_MTD_DATA?p_id=593&p_spraak=E').read()  #could probably save time here somehow
-soup = BeautifulSoup(html)
-data = soup.findAll("td","text10n") # only get data lines
-commentsdir = "/Users/Nick/Desktop/DataAcquision" + "/comments1.txt"
-outdir = "/Users/Nick/Desktop/DataAcquision" + "/data1.txt"
-commentsfile = open(commentsdir,"w")
-outfile = open(outdir,"w")
-for line in data:
-    if "#" in str(line):
-        outline = re.search(">(.*)<",str(line))
-        outline = outline.group(1) 
-        commentsfile.writelines(outline+"\n")
-    elif not "#" in str(line):ta.str
-        outline = re.search(">(.*)<",str(line))
-        outline = outline.group(1)# t
-        outline = re.sub(";",",",outline)
-        outline = re.sub(" ","",outline)
-        outfile.writelines(outline+"\n")
-commentsfile.close()
-outfile.close()
-
-#  Get link for data
-driver = webdriver.Firefox()
-driver.get('http://aps.ngu.no/pls/oradb/minres_bo_fakta.boho?p_id=154&p_spraak=E')
-datalinks = driver.find_elements_by_partial_link_text('measur')contenturl = "http://www.bank.gov.ua/control/en/curmetal/detail/currency?period=daily"
-soup = BeautifulSoup(urllib2.urlopen(contenturl).read())
-outlinks = list()
-beforepop = driver.window_handles # get a list of windows
-for link in datalinks:
-    link.click() #open the link
-    afterpop = driver.window_handles # get the identifier of the new popupsoup
-    
-    afterpop.remove(beforepop[0])  # remove old identified
-    driver.switch_to_window(afterpop[0]) # switch to popup window
-    dataURL = driver.current_url  # get URL of popup
-    outlinks.append(str(dataURL)) # add URL for that popup to list
-    driver.close() # close popup
-    driver.switch_to_window(beforepop) # go back to main page
-driver.switch_to_window(beforepop) # go back to main page
-driver.close() # close metadata page
-
-##  http://aps.ngu.no/pls/oradb/minres_bo_fakta.boho?p_id=154&p_spraak=E  this is a borehole
-
-
-## Get metadata for multiple
-html = urllib2.urlopen('http://aps.ngu.no/pls/oradb/minres_pe_fakta.pe_mtd?p_id=501&p_spraak=E').read() 
-soup = BeautifulSoup(html)
-        
-info = soup.findAll("b")  
-info2 = [piece.parent.nextSibling.nextSibling for piece in info] 
-
-# build keys
-keys=list()
-for item in info:
-    key = str(item.text)
-    key = re.sub(":","",key)
-    key = re.sub("\.","",key)
-    key = re.sub(" $","",key)
-    key = re.sub(" ","_",key)
-    keys.append(key)
-
-
-# unique-ify keys
-unikeys = list()
-for key in keys:
-    ind = 1
-    testkey = key
-    if not keys.count(str(testkey)) == 1:
-        testkey = key + "_%s" %str(ind)    
-    while testkey in unikeys:
-            testkey = key + "_%s" %str(ind)
-            ind += 1
-    unikeys.append(testkey)          
-
-#build dictionary
-Metadata = dict() 
-for key in unikeys:
-    if info2[unikeys.index(key)]:
-        val = str(info2[unikeys.index(key)].text)
-        Metadata.update({key:val})
-
-# Add stop times (don't worry about this for now) TODO: worry about this       
-#if Metadata["Measuring_date"]:
-#    endDate = info.index(filter(lambda x: re.search("Measuring date",str(x)),info)[0])
-#    endDate = info[endDate].parent.nextSibling.nextSibling.nextSibling.nextSibling.text
-#    Metadata.update({"Measuring_date_Stop":endDate})
-
-Metadata.update({"URL":url})
