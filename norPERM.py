@@ -21,6 +21,7 @@ class Trawler(object):
         self.log = list()
         self.SuccessfulURL = list()
         self.SkippedURL = list()
+        self.FailedURL = list()
     
     def CheckData(self,url):
         # open site
@@ -54,7 +55,6 @@ class Trawler(object):
             key = re.sub("__","_",key)
             key = re.sub("^[_;\-,]*","",key) #trim leading garbage
             keys.append(key)
-        
         
         # unique-ify keys
         unikeys = list()
@@ -195,8 +195,11 @@ class Trawler(object):
         outfile.writelines("Successfully read URLs: \n")
         for line in self.SuccessfulURL:
             outfile.writelines(line + "\n")
-        outfile.writelines("Skiped URLs: \n")
+        outfile.writelines("Skipped URLs: \n")
         for line in self.SkippedURL:
+            outfile.writelines(line + "\n")
+        outfile.writelines("Error URLs: \n")
+        for line in self.FailedURL:
             outfile.writelines(line + "\n")
         outfile.close()
         
@@ -206,7 +209,11 @@ class Trawler(object):
         if not os.path.exists(self.out_dir):
             os.makedirs(self.out_dir)
         for url in fileList:
-            self.TrawlPage(url,verbose=True)
+            try:
+                self.TrawlPage(url,verbose=True)
+            except:
+                print("error in processing" + url)
+                self.FailedURL.append(url)
         self.writeLog() # write log
         self.log = list() # reset log
         self.out_dir = originaldir # reset working directory
