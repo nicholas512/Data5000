@@ -25,7 +25,7 @@ write.table(out,file=outfile,quote=F,sep=",",row.names=F,col.names=F)
 }
 
 ## Process directory
-NP2GT_ALL <- function(dir){
+NP2GT_ALL <- function(direc){
   orig.dir = getwd()
   setwd(direc)
   items = list.files(direc,pattern="_data.txt")
@@ -52,11 +52,22 @@ summarize <- function(direc){
     index = index + 1
   }
 summary = summary[,-1]
-summary$Latitude[is.na(summary$Latitude)]<-summary$Latitude_1[is.na(summary$Latitude)]
-summary$Latitude[is.na(summary$Latitude)]<-summary$Latitude_2[is.na(summary$Latitude)]
-summary$Longitude[is.na(summary$Latitude)]<-summary$Longitude_1[is.na(summary$Latitude)]
-summary$Longitude[is.na(summary$Latitude)]<-summary$Longitude_2[is.na(summary$Latitude)]
 
+if (length(summary$Latitude_1[is.na(summary$Latitude)]) !=0){
+summary$Latitude[is.na(summary$Latitude)] <- summary$Latitude_1[is.na(summary$Latitude)]
+}
+if (length(summary$Latitude_2[is.na(summary$Latitude)]) !=0){
+summary$Latitude[is.na(summary$Latitude)] <- summary$Latitude_2[is.na(summary$Latitude)]
+}
+if (length(summary$Longitude_1[is.na(summary$Latitude)]) !=0){
+summary$Longitude[is.na(summary$Latitude)] <- summary$Longitude_1[is.na(summary$Latitude)]
+}
+if (length(summary$Longitude_2[is.na(summary$Latitude)]) !=0){
+summary$Longitude[is.na(summary$Latitude)] <- summary$Longitude_2[is.na(summary$Latitude)]
+}
+summary <- summary[,order(colnames(summary))]
+write.csv(summary,"Summary.csv")
+print("Summary file written to Summary.csv")
 setwd(orig.dir)
 return(summary)
 }
