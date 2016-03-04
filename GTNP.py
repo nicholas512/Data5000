@@ -8,11 +8,37 @@ import os
 import unicodedata
 from selenium.webdriver.common.keys import Keys
 import glob
+import time
+
+"""
+                         ..,co88oc.oo8888cc,..
+  o8o.               ..,o8889689ooo888o"88888888oooc..
+.88888             .o888896888 .88888888o'?888888888889ooo....
+a888P          ..c6888969""..,"o888888888o.?8888888888"".ooo8888oo.
+088P        ..atc88889"".,oo8o.86888888888o 88988889",o888888888888.
+888t  ...coo688889"'.ooo88o88b.'86988988889 8688888'o8888896989^888o
+ 888888888888"..ooo888968888888  "9o688888' "888988 8888868888'o88888
+  ""G8889""'ooo888888888888889 .d8o9889""'   "8688o."88888988 o888888o .
+           o8888''''''''''''   o8688"          88868. 888888.68988888"o8o.
+           88888o.              "8888ooo.        '8888. 88888.8898888o"888o.
+           "888888'               "888888'          '""8o"8888.8869888oo8888o .
+      . :.:::::::::::.: .     . :.::::::::.: .   . : ::.:."8888 "888888888888o
+                                                        :..8888,. "88888888888.
+                                                        .:o888.o8o.  "866o9888o
+                                                         :888.o8888.  "88."89".
+                                                        . 89  888888    "88":.
+                                                        :.     '8888o
+                                                         .       "8888..
+                                                                   888888o.
+                                                                    "888889,
+                                                             . : :.:::::::.: :.
+
+"""
 
 #################
 """Prowler"""  ## an object to scrape data from GTN-P
 #################
-
+## TODO: make some internal things private (__) or (_)
 class GTNProwler(object):
     def __init__(self,wd):
         print("initialized")
@@ -23,28 +49,35 @@ class GTNProwler(object):
         self.cur_siteMeta = dict()
         self.cur_siteData = pd.DataFrame()
         self.cur_siteExistsData = False
-        self.files_to_dl = list()
         self.out_dir = wd
         self.log = list()
-        self.SuccessfulURL = list()
-        self.SkippedURL = list()
+        self.successfulURL = list()
+        self.skippedURL = list()
         self.failedURL = list()
         self.FFprofile = webdriver.FirefoxProfile()
-        self.boreholesWithData = list()
+        self.boreholesWithData = "No boreholes with data, try processing mainpage HTML"
         self.boreholeNames = ['Name','TC-Code','GTN-P']
         self.dataNames = ['Site','TC-Code','GTN-P','Frequency','Type']
         # RunFunctions
         self.BuildFF()
     
     def resetSite(self):
-        self.files_to_dl = list()
         self.cur_siteMeta = list()
         self.cur_groundDataURL = list()
         self.cur_surfaceDataURL = list()
         self.cur_airDataURL = list()  
         self.cur_siteData = pd.DataFrame()
         self.cur_siteExistsData = False
-
+        
+    def logAppend(self,url,event):
+        if event == "fail":
+            log = self.failedURL
+        elif event == "success":
+            log = self.successfulURL
+        elif event == "skip":
+            log = self.skippedURL
+        if not url in log:
+            log.append(url)
         
     def buildNameStringBH(self):
         name=''
@@ -56,7 +89,7 @@ class GTNProwler(object):
         return(name)
             
     def BuildFF(self):
-
+        """ Make firefox profile for webdriver to automatically download things"""
         # Make output directory
         downloadDir = self.out_dir + "/" + "downloads"
         if not os.path.exists(downloadDir):
@@ -70,7 +103,8 @@ class GTNProwler(object):
         self.FFprofile.set_preference("browser.download.folderList", 2);
         self.FFprofile.set_preference("browser.download.dir", downloadDir)
     
-    def getMeta(self,url):  # Get metadata from gtnpdatabase.org/boreholes/view/#### page
+    def getMeta(self,url):  
+        """Get metadata from gtnpdatabase.org/boreholes/view/#### page"""
         try:
             html = urllib2.urlopen(url).read()
             soup = BeautifulSoup(html)
@@ -107,18 +141,32 @@ class GTNProwler(object):
         for key, value in self.cur_siteMeta.items():
             writer.writerow([key, value])
     
-    def getDataLinks(self, url = None, keepOpen=False):  # should be run AFTER getMeta
-        if url == None:
-            url = self.cur_siteMeta["URL"]
-        # Open browser window to metadata page 
-        self.driver = webdriver.Firefox(self.FFprofile)
-        self.driver.get(url)
+    def getDataLinks(self, url, keepOpen=False):  # should be run AFTER getMeta
+        """ Get links of all relevant data (ground, air, surface temperatures) linked from meta page"""
+        if len(self.cur_siteMeta) == 0:
+            print("run siteMeta() first to populate data fields for naming purpose")
         
+        if url != self.cur_siteMeta["URL"]:
+            self.getMeta(url)
+        # Open browser window to metadata page 
+        time.sleep(1)
+        try:
+            if len(self.driver.window_handles) == 0: ###  check if there's already a driver loaded,
+                self.driver = webdriver.Firefox(self.FFprofile)
+        except:   #otherwise load a new one
+            self.driver = webdriver.Firefox(self.FFprofile)
+        self.driver.get(url)
+
         # Go to data page and get HTML soup then maybe close data page
-        datalink = self.driver.find_element_by_id("dataButton")
+        try:
+            datalink = self.driver.find_element_by_id("dataButton")
+        except:
+            print("data page does not exist.  Err 404")
+            self.driver.close()
+            return
+
         datalink.click()
         soup = BeautifulSoup(self.driver.page_source)
-
         
         if keepOpen == False:
             self.driver.close()
@@ -171,36 +219,58 @@ class GTNProwler(object):
         datafile = self.out_dir + "/" + outstr + "_dataLinks.csv"
         data.to_csv(datafile, sep=',', encoding = 'utf-8')
     
-    def getData(self,url, pageOpen=False, keepOpen=False):       
+    def getData(self,url, pageOpen=False, keepOpen=False,CurrentMeta="self"):       # This is kind of awkward...
         if pageOpen == False:  
-            # URL is link of dataset page, from dataset links 
+            # url is link of dataset page
+            # CurrentMeta is the URL of the metadata /borehole page that leads to the url  
             # assumes everything is hunky-dory with accesing the data pages            
-            # Load browser with preferences and get to the site
-            # TODO: add some failsafes to make sure its on the right page and going to the right URL
-            # Maybe should feed it with the previous page?
             # TODO: seems to be some trouble if it quits unexpectedly with loading the FFprofile.
             #   Maybe make it so it automatically kills the active driver at the end if it crashes...
+            
+            # Load firefox profile with preferences
+            time.sleep(1)
             self.driver = webdriver.Firefox(self.FFprofile)
             
+            # Specify current borehole metadata either from self, or argument
+            if CurrentMeta == "self":
+                self.driver.get(self.cur_siteMeta["URL"]) # load metadata page
+            elif CurrentMeta != "self":
+                self.driver.get(CurrentMeta)
+            
+            #Open up data links page 
+            datalink = self.driver.find_element_by_id("dataButton") # taken from getdatalinks
+            datalink.click()
+            
+            #Go to specific data page
+            try:
+                match = re.search("/datasets/view/\d+",url)
+                match = match.group(0)
+                css="a[href*='"+match+"']"
+                self.driver.find_element_by_css_selector(css).click()
+            except:
+                print("warning, link URL does not match specified current metadata")
+
+        # If the brower page is already open, just go straight to the link
         elif pageOpen == True:
-            pass
+            self.driver.get(url) # sometimes this doesn't load
 
-        self.driver.get(url) # sometimes this doesn't load
-        # Assert that its a view 
-        ### TODO: otherwise revert to most recent page and click through manually 
-
-        #click click click - this downloads the data
-        getdata=self.driver.find_element_by_class_name("button")
-        getdata.click()
-        Agree=self.driver.find_elements_by_class_name("ui-widget-content")[2]
-        Agree.click()
-        self.driver.back() 
-        if keepOpen == False:
-            self.driver.close()
-        elif keepOpen == True:
-            pass  
+        # Hope that you're on the right page, then download the data. 
+        if 'datasets/view' in self.driver.current_url:
+            #click click click - this downloads the data from the view page
+            getdata=self.driver.find_element_by_class_name("button")
+            getdata.click()
+            Agree=self.driver.find_elements_by_class_name("ui-widget-content")[2]
+            Agree.click()
+            self.driver.back() 
+            if keepOpen == False:
+                self.driver.close()
+            elif keepOpen == True:
+                pass
+        else:
+            print('something went wrong, unable to load %s')%url
+            self.logAppend(url,"fail")
        
-    def ProcessData(self,PFfile,addSiteMeta=False,rename=False):  # Go through downloaded file and split it up
+    def processData(self,PFfile,addSiteMeta=False,rename=False):  # Go through downloaded file and split it up
         with open(PFfile, 'rb') as f:
             reader = csv.reader(f)
             orig_csv = list(reader)
@@ -290,43 +360,48 @@ class GTNProwler(object):
         data.to_csv(datafile, sep=',', encoding = 'utf-8')    
          
     def prowlPage(self,url,verbose=False):
+        # url is for borehole metadata page
         
         #Gather borehole metadata
         self.getMeta(url)
         
         # Get data links and record in self
-        self.getDataLinks(link,keepOpen=True)
+        self.getDataLinks(url,keepOpen=True)
         
         if self.cur_siteExistsData==True:
-            # Get data for each link (right now only ground temps) and process)
-            for link in self.cur_GroundDataURL:
-                # scan downloads directory for CSV, process, and rename
-                self.getData(link,pageOpen=True, keepOpen=True)          
-                newCSV = glob.glob(downloadDir + '/*.csv')
-                self.processData(newCSV, addSiteMeta=Tue, rename=True)
+            # Get data for each link and process
+            longlist = self.cur_groundDataURL + self.cur_airDataURL + self.cur_surfaceDataURL
+            for link in longlist:
+                self.getData(link,pageOpen=True, keepOpen=True)
+                # scan downloads directory for CSV, process, and rename          
+                newCSV = glob.glob(self.downloadDir + '/*.csv')[0]
+                self.processData(newCSV, addSiteMeta=True, rename=True)
+        else:
+            print("warning, no temperature data found for %s")%url
+            self.logAppend(url,"skip")
             
         # close window
-        self.webdriver.close()
+        self.driver.close()
     
     def writeLog(self):
         outdir = self.out_dir + "/"+ "log.txt"
         outfile = open(outdir,"w")
         outfile.writelines("Successfully read URLs: \n")
-        for line in self.SuccessfulURL:
+        for line in self.successfulURL:
             outfile.writelines(line + "\n")
-        outfile.writelines("Skipped URLs: \n")
-        for line in self.SkippedURL:
+        outfile.writelines("Skipped URLs (No Data): \n")
+        for line in self.skippedURL:
             outfile.writelines(line + "\n")
         outfile.writelines("Error URLs: \n")
         for line in self.failedURL:
             outfile.writelines(line + "\n")
         outfile.close()
         
-    def prowl(self,subfolder = "Boreholes",fileList="mainpage in directory",mainpage="/GTNP_Main.csv"):
+    def prowl(self,fileList="mainpage in directory",subfolder = "Boreholes",mainpage="/GTNP_Main.csv"):
         
         #Get lists
         if fileList == "mainpage in directory":
-            self.processMainpage(self.out_wd+mainpage)
+            self.processMainpage(self.out_dir+mainpage)
             fileList = self.boreholesWithData
         elif fileList != "mainpage in directory":
             fileList = fileList
@@ -335,17 +410,13 @@ class GTNProwler(object):
         for borehole in fileList:
             try:
                 self.prowlPage(borehole, verbose=True)
+                self.logAppend(borehole,"success")
+                self.resetSite()
+                
             except:
                 print("Error. Something went wrong with site, skipping %s")%borehole
-                if not borehole in self.failedURL:
-                    self.failedURL.append(borehole)
+                self.logAppend(borehole,"fail")
         #tidy up 
         self.unmaskCSV(self.downloadDir)         
         self.writeLog() # write log
         self.log = list() # reset log
-
-
-F = GTNProwler("/Users/Nick/Desktop/DataAcquision")
-
-
-
