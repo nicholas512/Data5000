@@ -22,7 +22,7 @@ a888P          ..c6888969""..,"o888888888o.?8888888888"".ooo8888oo.
            o8888''''''''''''   o8688"          88868. 888888.68988888"o8o.
            88888o.              "8888ooo.        '8888. 88888.8898888o"888o.
            "888888'               "888888'          '""8o"8888.8869888oo8888o .
-      . :.:::::::::::.: .     . :.::::::::.: .   . : ::.:."8888 "888888888888o
+      . :.:::::::::::.: .     . :.::::::::.: .   . : ::.:."8888 "8888888888 8o
                                                         :..8888,. "88888888888.
                                                         .:o888.o8o.  "866o9888o
                                                          :888.o8888.  "88."89".
@@ -329,8 +329,8 @@ class GTNProwler(object):
             os.rename(PFfile,re.sub('csv$',"MASKcsvX",PFfile))
     
     def unmaskCSV(self,direc):
-        for PFfile in glob.glob(direc +'/.MASKcsvX'):
-                os.rename(PFfile,re.sub("MASKcsvX$",'csv$',PFfile))
+        for PFfile in glob.glob(direc +'/*.MASKcsvX'):
+                os.rename(PFfile,re.sub("MASKcsvX$",'csv',PFfile))
     
     def processMainpage(self,GTNPmain="inSameDirectory"):
         
@@ -349,6 +349,7 @@ class GTNProwler(object):
         body   = [[td.text for td in row.findAll('td')] for row in table.findAll('tr')]
         body = body[1:]
         [x.append(datalinks[body.index(x)]) for x in body]
+        
         header.append("Link")
         data = pd.DataFrame(body, columns = header)
         
@@ -373,8 +374,12 @@ class GTNProwler(object):
             longlist = self.cur_groundDataURL + self.cur_airDataURL + self.cur_surfaceDataURL
             for link in longlist:
                 self.getData(link,pageOpen=True, keepOpen=True)
-                # scan downloads directory for CSV, process, and rename          
-                newCSV = glob.glob(self.downloadDir + '/*.csv')[0]
+                # scan downloads directory for CSV, process, and rename
+                counter = 0
+                while counter < 10 and len(glob.glob(self.downloadDir + '/*.csv')) ==0: #wait for file to d/l
+                    time.sleep(1)
+                    counter += 1    
+                newCSV = max(glob.iglob(self.downloadDir + '/*.csv'),key=os.path.getctime) # get newest file                                  
                 self.processData(newCSV, addSiteMeta=True, rename=True)
         else:
             print("warning, no temperature data found for %s")%url
