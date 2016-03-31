@@ -2,7 +2,7 @@ source("GTN_Process.R")
 
 setwd("Q:\\CommonData\\PermafrostData\\PERMOS")
 
-
+dat = read.csv("Q:\\CommonData\\PermafrostData\\PERMOS\\ATT_0108_2005-01-01_2016-03-16.csv",skip=4,header=T)
 
 PERMOS2GTop <- function(filename){
   NPraw = read.csv(filename,
